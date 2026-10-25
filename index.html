@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="de"><head><meta charset="utf-8"><title>Sonnenaufgang</title>
+<style>html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}canvas{display:block}</style>
+</head><body><canvas id="c"></canvas>
+<script>
+// Aufruf: sonnenaufgang.html?dauer=40&wetter=regen&t=0.5&ton=0
+//   dauer  = Sekunden bis voll hell (Standard 1200 = 20 Minuten)
+//   wetter = klar | wolkig | regen | schnee | nebel
+//   t      = Standbild an Stelle 0 bis 1 (nur zum Testen)
+//   ton=0  = ohne Ton
+const P = new URLSearchParams(location.search);
+const DAUER = Number(P.get('dauer')) || 1200;
+const FEST = P.has('t') ? Number(P.get('t')) : null;
+const WETTER = P.get('wetter') || 'klar';
+const TON = P.get('ton') !== '0';
+const WX = {klar:{grau:0,wolken:5}, wolkig:{grau:.45,wolken:16}, regen:{grau:.65,wolken:22},
+            schnee:{grau:.5,wolken:18}, nebel:{grau:.3,wolken:4}}[WETTER] || {grau:0,wolken:5};
+
+const c = document.getElementById('c'), x = c.getContext('2d');
+let W, H; function size(){ W = c.width = innerWidth; H = c.height = innerHeight; } size(); onresize = size;
+const start = performance.now();
+const lerp=(a,b,t)=>a+(b-a)*t, cl=v=>Math.max(0,Math.min(1,v));
+let seed = 11; const rnd=()=>{seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};
+function mix(stops,t){ for(let i=1;i<stops.length;i++) if(t<=stops[i][0]){const[a,ca]=stops[i-1],[b,cb]=stops[i],k=(t-a)/(b-a);
+    return ca.map((v,j)=>lerp(v,cb[j],k));} return stops[stops.length-1][1]; }
+const grau=(c,k)=>{const l=(c[0]*.3+c[1]*.59+c[2]*.11)*.95; return c.map(v=>lerp(v,l,k));};
+const hell=(c,k)=>c.map(v=>Math.min(255,v*k));
+const rgb=(a,al=1)=>`rgba(${a[0]|0},${a[1]|0},${a[2]|0},${al})`;
+const W1=(stops,e)=>grau(mix(stops,e),WX.grau);
+
+// Himmelsfarben ueber die Zeit (oben / Mitte / Horizont)
+const TOP=[[0,[2,2,8]],[.3,[18,14,48]],[.55,[60,60,120]],[.8,[120,160,210]],[1,[170,200,235]]];
+const MID=[[0,[3,2,6]],[.25,[50,18,40]],[.5,[150,60,70]],[.75,[230,150,110]],[1,[250,220,180]]];
+const HOR=[[0,[6,2,2]],[.2,[90,20,10]],[.45,[220,90,30]],[.7,[255,170,80]],[1,[255,235,200]]];
+
+// Landschaft einmal zufaellig (aber jedes Mal gleich) erzeugen
+function ridge(n,rough){ const a=new Array(n+1).fill(0); a[0]=rnd()*2-1; a[n]=rnd()*2-1; let s=n,amp=1;
+  while(s>1){const h=s/2; for(let i=h;i<n;i+=s) a[i]=(a[i-h]+a[i+h])/2+(rnd()*2-1)*amp; s=h; amp*=rough;}
+  const m=Math.max(...a.map(Math.abs)); return a.map(v=>v/m); }
+const BERGE = ridge(256,.55), HUEGEL = ridge(256,.45);
+const WALD = [...Array(400)].map(()=>({u:rnd(),h:.4+rnd()*.6}));
+const BAEUME = [...Array(26)].map(()=>{const l=rnd()<.55; return {u:l?rnd()*.32:.78+rnd()*.22,h:.6+rnd()*.5};});
+const stars=[...Array(160)].map(()=>({x:rnd(),y:rnd()*.6,r:rnd()*1.4+.3,p:rnd()*6}));
+const clouds=[...Array(WX.wolken)].map(()=>({x:rnd()*1.3,y:.06+rnd()*.38,s:.6+rnd()*.9,v:(.3+rnd()*.7)*.006,
+  teile:[...Array(6)].map(()=>({dx:(rnd()-.5)*.16,dy:(rnd()-.5)*.025,r:.025+rnd()*.03}))}));
+const tropfen=[...Array(WETTER==='regen'?420:WETTER==='schnee'?260:0)].map(()=>({x:rnd(),y:rnd(),v:.6+rnd()*.6,p:rnd()*6}));
+
+// Hoehen der Landschaft (Anteil der Bildhoehe)
+const bergY=u=>.62-BERGE[Math.round(u*256)]*.07;
+const huegelY=u=>.74-HUEGEL[Math.round(u*256)]*.035;
+const SEE=.80;
+const uferY=u=>{const d=Math.abs(u-.56)*2; return .97-Math.pow(d,2.4)*.17;};
+
+function schicht(f,col){ x.fillStyle=col; x.beginPath(); x.moveTo(0,H); for(let i=0;i<=256;i++) x.lineTo(i/256*W,f(i/256)*H); x.lineTo(W,H); x.fill(); }
+function tanne(px,py,h,col){ x.fillStyle=col; x.beginPath(); const b=h*.32;
+  for(let k=0;k<3;k++){ const y0=py-h*k*.28, w=b*(1-k*.25); x.moveTo(px-w,y0); x.lineTo(px,y0-h*.5); x.lineTo(px+w,y0); }
+  x.fill(); x.fillRect(px-h*.03,py-h*.05,h*.06,h*.12); }
+
+let T=0, last=performance.now();
+function frame(now){
+  const dt=Math.min(.1,(now-last)/1000); last=now;
+  const t = T = FEST!==null ? FEST : cl((now-start)/1000/DAUER);
+  const e = t*t*(3-2*t);
+  const cTop=W1(TOP,e), cMid=W1(MID,e), cHor=W1(HOR,e);
+  // Himmel
+  const g=x.createLinearGradient(0,0,0,H*SEE); g.addColorStop(0,rgb(cTop)); g.addColorStop(.6,rgb(cMid)); g.addColorStop(1,rgb(cHor));
+  x.fillStyle=g; x.fillRect(0,0,W,H);
+  // Sterne (bei dichten Wolken weniger)
+  const sa=cl(1-e*3)*(1-WX.grau); if(sa>0) for(const s of stars){ x.fillStyle=`rgba(255,255,255,${sa*(.6+.4*Math.sin(now/900+s.p))})`;
+    x.beginPath(); x.arc(s.x*W,s.y*H,s.r,0,7); x.fill(); }
+  // Sonne
+  const sx=W*.56, sy=lerp(H*.78,H*.2,cl((e-.12)/.88)), sr=H*.06, sk=cl(1-WX.grau*1.1);
+  const glow=x.createRadialGradient(sx,sy,0,sx,sy,H*lerp(.35,1.1,e));
+  glow.addColorStop(0,`rgba(255,${lerp(140,240,e)|0},${lerp(60,200,e)|0},${lerp(.5,.85,e)*sk})`); glow.addColorStop(1,'rgba(255,150,60,0)');
+  x.fillStyle=glow; x.fillRect(0,0,W,H);
+  x.fillStyle=rgb(mix([[0,[255,90,30]],[.5,[255,180,90]],[1,[255,248,230]]],e),sk); x.beginPath(); x.arc(sx,sy,sr,0,7); x.fill();
+  // Wolken, von unten angestrahlt
+  // weiche Wolkenfetzen: oben dunkler Koerper, unten vom Sonnenlicht angestrahlte Kante
+  const koerper=hell(grau(cMid,.3+WX.grau*.5),lerp(.85,.7,WX.grau)), kante=grau(mix(HOR,cl(e*1.15)),WX.grau*.7);
+  const deck=lerp(.5,.9,WX.grau)*cl(.25+e*1.5);
+  for(const k of clouds){ k.x+=k.v*dt/6; if(k.x>1.4) k.x=-.3; const cx=(k.x-.15)*W, cy=k.y*H, R=H*k.s;
+    for(const [farbe,dy,al] of [[koerper,0,deck],[kante,.012,deck*.8]]){
+      for(const p of k.teile){ const px=cx+p.dx*R*3, py=cy+(p.dy+dy)*R*3, rx=p.r*R*2.6;
+        x.save(); x.translate(px,py); x.scale(1,.32);
+        const rg=x.createRadialGradient(0,0,0,0,0,rx); rg.addColorStop(0,rgb(farbe,al)); rg.addColorStop(.6,rgb(farbe,al*.6)); rg.addColorStop(1,rgb(farbe,0));
+        x.fillStyle=rg; x.beginPath(); x.arc(0,0,rx,0,7); x.fill(); x.restore(); } } }
+  // Ferne Berge (blaeulich, etwas Morgenlicht darauf)
+  const berg=mix([[0,[4,3,10]],[1,grau([110,105,140],WX.grau)]],e).map((v,i)=>lerp(v,cHor[i],.18*e));
+  schicht(bergY,rgb(berg));
+  // Huegel mit Wald
+  const hc=rgb(mix([[0,[2,2,6]],[1,grau([55,62,70],WX.grau)]],e)); schicht(huegelY,hc); x.fillStyle=hc;
+  for(const b of WALD){ const px=b.u*W, py=huegelY(b.u)*H+2, h=H*.022*b.h; x.beginPath(); x.moveTo(px-h*.3,py); x.lineTo(px,py-h); x.lineTo(px+h*.3,py); x.fill(); }
+  // See, spiegelt den Himmel
+  const sg=x.createLinearGradient(0,H*SEE,0,H); sg.addColorStop(0,rgb(hell(cHor,.75))); sg.addColorStop(1,rgb(hell(cMid,.45)));
+  x.fillStyle=sg; x.fillRect(0,H*SEE,W,H*(1-SEE));
+  x.fillStyle=hc; x.fillRect(0,H*SEE-1,W,2);
+  if(sy<H*SEE){ const len=H*(1-SEE), sf=`255,${lerp(170,240,e)|0},${lerp(90,200,e)|0}`, hoch=cl((H*SEE-sy)/(H*.15));
+    // weicher Lichtschein auf dem Wasser
+    x.save(); x.translate(sx,H*SEE); x.scale(1,2.2); const rs=x.createRadialGradient(0,0,0,0,0,sr*2.2);
+    rs.addColorStop(0,`rgba(${sf},${.45*sk*hoch})`); rs.addColorStop(1,`rgba(${sf},0)`); x.fillStyle=rs; x.fillRect(-sr*2.2,0,sr*4.4,sr*2.2); x.restore();
+    // viele feine, glitzernde Lichtpunkte, die sich mit den Wellen bewegen
+    for(let k=0;k<90;k++){ const f=k/90, yy=H*SEE+len*Math.pow(f,1.3)*.95, breite=sr*lerp(1.1,2,f);
+      const off=Math.sin(k*12.9898)*breite + Math.sin(now/700+k*3.1)*sr*.15, w=sr*(.08+.25*Math.abs(Math.sin(k*78.233+now/900)));
+      const al=.7*(1-f)*sk*hoch*(.4+.6*Math.abs(Math.sin(now/500+k*1.7)));
+      x.fillStyle=`rgba(${sf},${al})`; x.fillRect(sx+off-w,yy,w*2,Math.max(1,H*.0025)); } }
+  // Vordergrund: Ufer mit Tannen
+  const schnee=WETTER==='schnee';
+  const fc=rgb(schnee? mix([[0,[8,8,14]],[1,[215,220,230]]],e) : mix([[0,[1,1,3]],[1,grau([28,34,30],WX.grau)]],e));
+  const tc=rgb(mix([[0,[1,1,3]],[1,grau([22,30,26],WX.grau)]],e));
+  schicht(uferY,fc);
+  for(const b of BAEUME) tanne(b.u*W,uferY(b.u)*H+H*.01,H*.16*b.h,tc);
+  // Regen oder Schnee
+  if(tropfen.length){ const a=lerp(.25,.5,e);
+    for(const d of tropfen){
+      if(WETTER==='regen'){ d.y+=d.v*dt*1.6; d.x+=dt*.05; if(d.y>1){d.y=0;d.x=rnd();} x.strokeStyle=`rgba(200,210,225,${a})`; x.lineWidth=1;
+        x.beginPath(); x.moveTo(d.x*W,d.y*H); x.lineTo(d.x*W+H*.006,d.y*H+H*.035); x.stroke(); }
+      else { d.y+=d.v*dt*.08; if(d.y>1){d.y=0;d.x=rnd();} x.fillStyle=`rgba(255,255,255,${a+.3})`;
+        x.beginPath(); x.arc((d.x+Math.sin(now/1500+d.p)*.01)*W,d.y*H,1.2+d.v*1.5,0,7); x.fill(); } }
+    if(WETTER==='regen') for(let k=0;k<6;k++){ const rx=(Math.sin(k*91+Math.floor(now/600))*.5+.5)*W, ry=H*(SEE+.02+((k*37)%10)/80), r=(now%600)/600*H*.015;
+      x.strokeStyle=`rgba(220,225,235,${.3*(1-r/(H*.015))})`; x.beginPath(); x.ellipse(rx,ry,r*2.5,r*.6,0,0,7); x.stroke(); } }
+  // Nebel
+  if(WETTER==='nebel'){ for(let k=0;k<4;k++){ const y0=H*(.6+k*.09), fg=x.createLinearGradient(0,y0-H*.08,0,y0+H*.08), col=hell(grau(cHor,.6),1.05);
+      fg.addColorStop(0,rgb(col,0)); fg.addColorStop(.5,rgb(col,.55)); fg.addColorStop(1,rgb(col,0)); x.fillStyle=fg; x.fillRect(0,y0-H*.08,W,H*.16); } }
+  // Zum Schluss sanft warmweiss aufhellen, damit es wirklich hell wird
+  const w=cl((t-.85)/.15); if(w>0){ x.fillStyle=`rgba(255,240,215,${w*.55})`; x.fillRect(0,0,W,H); }
+  if(TON && FEST===null && !gestartet){ x.fillStyle='rgba(255,255,255,.35)'; x.font=`${H*.02|0}px sans-serif`; x.fillText('Klick oder Taste für Ton',H*.03,H*.97); }
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---------- Ton: echte Vogelaufnahme aus einem Wald in Sussex (CC BY-SA 4.0, Wikimedia Commons "0426AM Dawn Chorus 07-May-2023 (edit).ogg"), Brummen und Rauschen mit ffmpeg herausgefiltert, lauter gemacht ----------
+// Jeden Morgen startet die Aufnahme an einer zufaelligen Stelle, damit es sich nicht wiederholt.
+// Bei Regen kommt leises Regenrauschen dazu und die Voegel sind leiser.
+const VOEGEL_LAUT = {klar:1, wolkig:.9, nebel:.8, regen:.35, schnee:.4}[WETTER] ?? 1;
+const audio = new Audio("voegel-wald.opus"); audio.loop = true; audio.volume = 0;
+audio.addEventListener('loadedmetadata', ()=>{ const frei = Math.max(0, audio.duration - DAUER - 300); audio.currentTime = Math.random()*frei; });
+let ac=null, master=null, gestartet=false;
+function startTon(){ if(!TON) return;
+  audio.play().then(()=>{ gestartet=true; }).catch(()=>{});
+  if(WETTER==='regen' && !ac){ ac=new AudioContext(); master=ac.createGain(); master.gain.value=0; master.connect(ac.destination);
+    const buf=ac.createBuffer(1,ac.sampleRate*2,ac.sampleRate), d=buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+    const src=ac.createBufferSource(); src.buffer=buf; src.loop=true; const f=ac.createBiquadFilter(); f.type='lowpass'; f.frequency.value=2200;
+    const ng=ac.createGain(); ng.gain.value=.22; src.connect(f).connect(ng).connect(master); src.start(); }
+  else if(ac) ac.resume();
+}
+setInterval(()=>{ const laut = cl((T-.2)/.6); audio.volume = Math.min(1, laut*.9*VOEGEL_LAUT); if(master) master.gain.value = cl(T/.3)*.8; }, 250);
+addEventListener('click',startTon); addEventListener('keydown',startTon); startTon();
+</script></body></html>
