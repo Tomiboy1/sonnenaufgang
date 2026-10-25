@@ -3,6 +3,9 @@
 <style>html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}canvas{display:block}</style>
 </head><body><canvas id="c"></canvas>
 <script>
+window.onerror=function(m,s,l){var d=document.createElement("pre");d.style.cssText="position:fixed;top:10px;left:10px;color:#f88;font-size:24px;z-index:9";d.textContent="Fehler: "+m+" (Zeile "+l+")";document.body.appendChild(d);};
+</script>
+<script>
 // Aufruf: sonnenaufgang.html?dauer=40&wetter=regen&t=0.5&ton=0
 //   dauer  = Sekunden bis voll hell (Standard 1200 = 20 Minuten)
 //   wetter = klar | wolkig | regen | schnee | nebel
@@ -132,7 +135,7 @@ requestAnimationFrame(frame);
 // ---------- Ton: echte Vogelaufnahme aus einem Wald in Sussex (CC BY-SA 4.0, Wikimedia Commons "0426AM Dawn Chorus 07-May-2023 (edit).ogg"), Brummen und Rauschen mit ffmpeg herausgefiltert, lauter gemacht ----------
 // Jeden Morgen startet die Aufnahme an einer zufaelligen Stelle, damit es sich nicht wiederholt.
 // Bei Regen kommt leises Regenrauschen dazu und die Voegel sind leiser.
-const VOEGEL_LAUT = {klar:1, wolkig:.9, nebel:.8, regen:.35, schnee:.4}[WETTER] ?? 1;
+const VOEGEL_LAUT = {klar:1, wolkig:.9, nebel:.8, regen:.35, schnee:.4}[WETTER] || 1;
 const audio = new Audio("voegel-wald.opus"); audio.loop = true; audio.volume = 0;
 audio.addEventListener('loadedmetadata', ()=>{ const frei = Math.max(0, audio.duration - DAUER - 300); audio.currentTime = Math.random()*frei; });
 let ac=null, master=null, gestartet=false;
