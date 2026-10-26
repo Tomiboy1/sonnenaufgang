@@ -16,6 +16,10 @@ const DAUER = Number(P.get('dauer')) || 1200;
 const FEST = P.has('t') ? Number(P.get('t')) : null;
 const WETTER = P.get('wetter') || 'klar';
 const TON = P.get('ton') !== '0';
+const WIND_KMH = P.has('wind') ? Number(P.get('wind')) : ({klar:8, wolkig:15, regen:25, schnee:12, nebel:3}[WETTER] || 8);
+const WIND = Math.max(0, Math.min(1, WIND_KMH/40));
+// Boeen: langsam schwankende Windstaerke zwischen etwa 0.1 und 1
+function boe(now){ return .55 + .45*Math.sin(now/5300)*Math.sin(now/1700+1); }
 const WX = {klar:{grau:0,wolken:5}, wolkig:{grau:.45,wolken:16}, regen:{grau:.65,wolken:22},
             schnee:{grau:.5,wolken:18}, nebel:{grau:.3,wolken:4}}[WETTER] || {grau:0,wolken:5};
 
@@ -55,8 +59,8 @@ const SEE=.80;
 const uferY=u=>{const d=Math.abs(u-.56)*2; return .97-Math.pow(d,2.4)*.17;};
 
 function schicht(f,col){ x.fillStyle=col; x.beginPath(); x.moveTo(0,H); for(let i=0;i<=256;i++) x.lineTo(i/256*W,f(i/256)*H); x.lineTo(W,H); x.fill(); }
-function tanne(px,py,h,col){ x.fillStyle=col; x.beginPath(); const b=h*.32;
-  for(let k=0;k<3;k++){ const y0=py-h*k*.28, w=b*(1-k*.25); x.moveTo(px-w,y0); x.lineTo(px,y0-h*.5); x.lineTo(px+w,y0); }
+function tanne(px,py,h,col,s){ s=s||0; x.fillStyle=col; x.beginPath(); const b=h*.32;
+  for(let k=0;k<3;k++){ const y0=py-h*k*.28, w=b*(1-k*.25), o=s*k*.3; x.moveTo(px-w+o,y0); x.lineTo(px+s*(.4+k*.3),y0-h*.5); x.lineTo(px+w+o,y0); }
   x.fill(); x.fillRect(px-h*.03,py-h*.05,h*.06,h*.12); }
 
 let T=0, last=performance.now();
@@ -64,6 +68,7 @@ function frame(now){
   const dt=Math.min(.1,(now-last)/1000); last=now;
   const t = T = FEST!==null ? FEST : cl((now-start)/1000/DAUER);
   const e = t*t*(3-2*t);
+  const bo = boe(now);
   const cTop=W1(TOP,e), cMid=W1(MID,e), cHor=W1(HOR,e);
   // Himmel
   const g=x.createLinearGradient(0,0,0,H*SEE); g.addColorStop(0,rgb(cTop)); g.addColorStop(.6,rgb(cMid)); g.addColorStop(1,rgb(cHor));
@@ -81,7 +86,7 @@ function frame(now){
   // weiche Wolkenfetzen: oben dunkler Koerper, unten vom Sonnenlicht angestrahlte Kante
   const koerper=hell(grau(cMid,.3+WX.grau*.5),lerp(.85,.7,WX.grau)), kante=grau(mix(HOR,cl(e*1.15)),WX.grau*.7);
   const deck=lerp(.5,.9,WX.grau)*cl(.25+e*1.5);
-  for(const k of clouds){ k.x+=k.v*dt/6; if(k.x>1.4) k.x=-.3; const cx=(k.x-.15)*W, cy=k.y*H, R=H*k.s;
+  for(const k of clouds){ k.x+=k.v*dt/6*(.4+WIND*3.5)*(.7+.3*bo); if(k.x>1.4) k.x=-.3; const cx=(k.x-.15)*W, cy=k.y*H, R=H*k.s;
     for(const [farbe,dy,al] of [[koerper,0,deck],[kante,.012,deck*.8]]){
       for(const p of k.teile){ const px=cx+p.dx*R*3, py=cy+(p.dy+dy)*R*3, rx=p.r*R*2.6;
         x.save(); x.translate(px,py); x.scale(1,.32);
@@ -92,7 +97,7 @@ function frame(now){
   schicht(bergY,rgb(berg));
   // Huegel mit Wald
   const hc=rgb(mix([[0,[2,2,6]],[1,grau([55,62,70],WX.grau)]],e)); schicht(huegelY,hc); x.fillStyle=hc;
-  for(const b of WALD){ const px=b.u*W, py=huegelY(b.u)*H+2, h=H*.022*b.h; x.beginPath(); x.moveTo(px-h*.3,py); x.lineTo(px,py-h); x.lineTo(px+h*.3,py); x.fill(); }
+  for(const b of WALD){ const px=b.u*W, py=huegelY(b.u)*H+2, h=H*.022*b.h; x.beginPath(); x.moveTo(px-h*.3,py); x.lineTo(px+h*WIND*.12*bo*(.6+.4*Math.sin(now/1100+b.u*60)),py-h); x.lineTo(px+h*.3,py); x.fill(); }
   // See, spiegelt den Himmel
   const sg=x.createLinearGradient(0,H*SEE,0,H); sg.addColorStop(0,rgb(hell(cHor,.75))); sg.addColorStop(1,rgb(hell(cMid,.45)));
   x.fillStyle=sg; x.fillRect(0,H*SEE,W,H*(1-SEE));
@@ -111,7 +116,7 @@ function frame(now){
   const fc=rgb(schnee? mix([[0,[8,8,14]],[1,[215,220,230]]],e) : mix([[0,[1,1,3]],[1,grau([28,34,30],WX.grau)]],e));
   const tc=rgb(mix([[0,[1,1,3]],[1,grau([22,30,26],WX.grau)]],e));
   schicht(uferY,fc);
-  for(const b of BAEUME) tanne(b.u*W,uferY(b.u)*H+H*.01,H*.16*b.h,tc);
+  for(const b of BAEUME){ const h=H*.16*b.h; tanne(b.u*W,uferY(b.u)*H+H*.01,h,tc, h*WIND*(.05*bo + .03*Math.sin(now/(800+b.h*400)+b.u*40))); }
   // Regen oder Schnee
   if(tropfen.length){ const a=lerp(.25,.5,e);
     for(const d of tropfen){
@@ -138,15 +143,18 @@ requestAnimationFrame(frame);
 const VOEGEL_LAUT = {klar:1, wolkig:.9, nebel:.8, regen:.35, schnee:.4}[WETTER] || 1;
 const audio = new Audio("voegel-wald.opus"); audio.loop = true; audio.volume = 0;
 audio.addEventListener('loadedmetadata', ()=>{ const frei = Math.max(0, audio.duration - DAUER - 300); audio.currentTime = Math.random()*frei; });
-let ac=null, master=null, gestartet=false;
+let ac=null, master=null, windG=null, windF=null, gestartet=false;
 function startTon(){ if(!TON) return;
   audio.play().then(()=>{ gestartet=true; }).catch(()=>{});
-  if(WETTER==='regen' && !ac){ ac=new AudioContext(); master=ac.createGain(); master.gain.value=0; master.connect(ac.destination);
-    const buf=ac.createBuffer(1,ac.sampleRate*2,ac.sampleRate), d=buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
-    const src=ac.createBufferSource(); src.buffer=buf; src.loop=true; const f=ac.createBiquadFilter(); f.type='lowpass'; f.frequency.value=2200;
-    const ng=ac.createGain(); ng.gain.value=.22; src.connect(f).connect(ng).connect(master); src.start(); }
+  if((WETTER==='regen' || WIND>.05) && !ac){ ac=new (window.AudioContext||window.webkitAudioContext)(); master=ac.createGain(); master.gain.value=0; master.connect(ac.destination);
+    const buf=ac.createBuffer(1,ac.sampleRate*4,ac.sampleRate), d=buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
+    if(WETTER==='regen'){ const src=ac.createBufferSource(); src.buffer=buf; src.loop=true; const f=ac.createBiquadFilter(); f.type='lowpass'; f.frequency.value=2200;
+      const ng=ac.createGain(); ng.gain.value=.22; src.connect(f); f.connect(ng); ng.connect(master); src.start(); }
+    if(WIND>.05){ const src=ac.createBufferSource(); src.buffer=buf; src.loop=true; windF=ac.createBiquadFilter(); windF.type='bandpass'; windF.frequency.value=300; windF.Q.value=.8;
+      windG=ac.createGain(); windG.gain.value=0; src.connect(windF); windF.connect(windG); windG.connect(master); src.start(); } }
   else if(ac) ac.resume();
 }
-setInterval(()=>{ const laut = cl((T-.2)/.6); audio.volume = Math.min(1, laut*.9*VOEGEL_LAUT); if(master) master.gain.value = cl(T/.3)*.8; }, 250);
+setInterval(()=>{ const laut = cl((T-.2)/.6); audio.volume = Math.min(1, laut*.9*VOEGEL_LAUT); if(master) master.gain.value = cl(T/.3)*.8;
+  if(windG){ const bo=boe(performance.now()); windG.gain.setTargetAtTime((.04+WIND*.3)*(.25+.75*bo), ac.currentTime, .6); windF.frequency.setTargetAtTime(220+bo*380*(.5+WIND), ac.currentTime, .6); } }, 250);
 addEventListener('click',startTon); addEventListener('keydown',startTon); startTon();
 </script></body></html>
