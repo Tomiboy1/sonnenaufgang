@@ -50,7 +50,16 @@ const BAEUME = [...Array(26)].map(()=>{const l=rnd()<.55; return {u:l?rnd()*.32:
 const stars=[...Array(160)].map(()=>({x:rnd(),y:rnd()*.6,r:rnd()*1.4+.3,p:rnd()*6}));
 const clouds=[...Array(WX.wolken)].map(()=>({x:rnd()*1.3,y:.06+rnd()*.38,s:.6+rnd()*.9,v:(.3+rnd()*.7)*.006,
   teile:[...Array(6)].map(()=>({dx:(rnd()-.5)*.16,dy:(rnd()-.5)*.025,r:.025+rnd()*.03}))}));
-const striche=[...Array(9)].map((_,i)=>({i,x:rnd()*1.2-.2,y:.08+rnd()*.5,v:.7+rnd()*.6,leben:rnd()*4,dauer:4+rnd()*5,schleife:rnd()<.6}));
+const striche=[...Array(8)].map((_,i)=>({i,pkt:null,pause:rnd()*4}));
+// Baut einen zufaelligen Weg: Richtung ungefaehr nach rechts, sanfte Wellen, an zufaelligen Stellen Schleifen
+function neuerStrich(w){ const N=160, L=.25+rnd()*.4, ds=L/N; let px=-.05+rnd()*.8, py=.08+rnd()*.5, th=(rnd()-.5)*.5;
+  const schleifen=[], k=rnd(); const anz=k<.3?0:k<.8?1:2;
+  for(let q=0;q<anz;q++) schleifen.push({s:Math.floor((.2+rnd()*.6)*N), m:Math.floor(18+rnd()*30), r:rnd()<.75?-1:1});
+  const wf=1+rnd()*3, wa=.15+rnd()*.35, ph=rnd()*6; w.pkt=[];
+  for(let j=0;j<=N;j++){ let dth=Math.sin(j/N*wf*6.283+ph)*wa*.06;
+    for(const sl of schleifen) if(j>=sl.s && j<sl.s+sl.m) dth+=sl.r*6.283/sl.m;
+    th+=dth; px+=Math.cos(th)*ds; py+=Math.sin(th)*ds*W/H*.6; w.pkt.push([px,py]); }
+  w.leben=0; w.dauer=3+rnd()*4; w.dicke=.7+rnd()*.9; w.al=.18+rnd()*.2; w.dx=0; }
 const voegel=[...Array(6)].map((_,i)=>({i,x:-.15-rnd()*1.2,y:.12+rnd()*.33,v:.025+rnd()*.03,g:.7+rnd()*.6,p:rnd()*6}));
 const tropfen=[...Array(WETTER==='regen'?420:WETTER==='schnee'?260:0)].map(()=>({x:rnd(),y:rnd(),v:.6+rnd()*.6,p:rnd()*6}));
 
@@ -94,14 +103,21 @@ function frame(now){
         x.save(); x.translate(px,py); x.scale(1,.32);
         const rg=x.createRadialGradient(0,0,0,0,0,rx); rg.addColorStop(0,rgb(farbe,al)); rg.addColorStop(.6,rgb(farbe,al*.6)); rg.addColorStop(1,rgb(farbe,0));
         x.fillStyle=rg; x.beginPath(); x.arc(0,0,rx,0,7); x.fill(); x.restore(); } } }
-  // Windstriche mit Schleife (ab ca. 15 km/h, mehr bei mehr Wind)
-  for(const w of striche){ if(w.i>=Math.round(WIND*WIND*9)) continue;
-    w.x+=dt*(.05+WIND*.25)*w.v; w.leben+=dt;
-    if(w.x>1.3||w.leben>w.dauer){ w.x=-.3+rnd()*.5; w.y=.08+rnd()*.5; w.leben=0; w.dauer=4+rnd()*5; w.schleife=rnd()<.6; }
-    const L=W*.22*w.v, a=L/(2.6*Math.PI), bb=w.schleife?a*1.9:a*.5, al=.32*Math.sin(Math.PI*w.leben/w.dauer)*e;
-    if(al<=0) continue; x.strokeStyle=rgb([255,255,255],al); x.lineWidth=Math.max(1.5,H*.0025); x.lineCap='round'; x.beginPath();
-    for(let j=0;j<=60;j++){ const p=j/60*2.6*Math.PI, px=w.x*W+a*p-bb*Math.sin(p), py=w.y*H-bb*Math.cos(p)*.8+bb*.8+Math.sin(p*.5+w.leben)*H*.004;
-      j?x.lineTo(px,py):x.moveTo(px,py); } x.stroke(); }
+  // Windstriche: jeder zeichnet sich selbst (Spitze waechst, Ende loest sich auf), eigener Weg mit 0 bis 2 Schleifen
+  const wAnzahl=Math.max(0,Math.round(WIND*WIND*8-.2));
+  for(const w of striche){
+    if(w.pause>0){ w.pause-=dt; continue; }
+    if(!w.pkt){ if(w.i>=wAnzahl){ w.pause=1+rnd()*3; continue; } neuerStrich(w); }
+    w.leben+=dt*(.5+WIND*.9)/w.dauer; const p=w.leben;
+    const kopf=cl(p/.55), schwanz=cl((p-.35)/.65);
+    if(p>=1){ w.pkt=null; w.pause=1+rnd()*(8-WIND*5); continue; }
+    const n=w.pkt.length-1, i0=Math.floor(schwanz*n), i1=Math.floor(kopf*n);
+    if(i1-i0<2) continue;
+    x.lineWidth=w.dicke*H*.0022; x.lineCap='round';
+    for(let j=i0;j<i1;j+=2){ const u=(j-i0)/(i1-i0), al=w.al*Math.pow(Math.sin(Math.PI*u),.8)*e;
+      if(al<.01) continue; x.strokeStyle=rgb([255,255,255],al); x.beginPath();
+      const p1=w.pkt[j], p2=w.pkt[Math.min(j+2,i1)]; x.moveTo(p1[0]*W+w.dx*W,p1[1]*H); x.lineTo(p2[0]*W+w.dx*W,p2[1]*H); x.stroke(); }
+    w.dx+=dt*WIND*.004; }
   // Voegel: kommen, wenn es heller wird, bei Regen und Sturm weniger
   const vAnzahl=Math.round(cl((t-.35)/.3)*(WETTER==='regen'||WETTER==='schnee'?2:6)*(1-WIND*.5));
   for(const v of voegel){ if(v.i>=vAnzahl) continue;
