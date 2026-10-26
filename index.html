@@ -50,6 +50,8 @@ const BAEUME = [...Array(26)].map(()=>{const l=rnd()<.55; return {u:l?rnd()*.32:
 const stars=[...Array(160)].map(()=>({x:rnd(),y:rnd()*.6,r:rnd()*1.4+.3,p:rnd()*6}));
 const clouds=[...Array(WX.wolken)].map(()=>({x:rnd()*1.3,y:.06+rnd()*.38,s:.6+rnd()*.9,v:(.3+rnd()*.7)*.006,
   teile:[...Array(6)].map(()=>({dx:(rnd()-.5)*.16,dy:(rnd()-.5)*.025,r:.025+rnd()*.03}))}));
+const striche=[...Array(9)].map((_,i)=>({i,x:rnd()*1.2-.2,y:.08+rnd()*.5,v:.7+rnd()*.6,leben:rnd()*4,dauer:4+rnd()*5,schleife:rnd()<.6}));
+const voegel=[...Array(6)].map((_,i)=>({i,x:-.15-rnd()*1.2,y:.12+rnd()*.33,v:.025+rnd()*.03,g:.7+rnd()*.6,p:rnd()*6}));
 const tropfen=[...Array(WETTER==='regen'?420:WETTER==='schnee'?260:0)].map(()=>({x:rnd(),y:rnd(),v:.6+rnd()*.6,p:rnd()*6}));
 
 // Hoehen der Landschaft (Anteil der Bildhoehe)
@@ -86,18 +88,33 @@ function frame(now){
   // weiche Wolkenfetzen: oben dunkler Koerper, unten vom Sonnenlicht angestrahlte Kante
   const koerper=hell(grau(cMid,.3+WX.grau*.5),lerp(.85,.7,WX.grau)), kante=grau(mix(HOR,cl(e*1.15)),WX.grau*.7);
   const deck=lerp(.5,.9,WX.grau)*cl(.25+e*1.5);
-  for(const k of clouds){ k.x+=k.v*dt/6*(.4+WIND*3.5)*(.7+.3*bo); if(k.x>1.4) k.x=-.3; const cx=(k.x-.15)*W, cy=k.y*H, R=H*k.s;
+  for(const k of clouds){ k.x+=k.v*dt/6*(.3+Math.pow(WIND,1.5)*8)*(.7+.3*bo); if(k.x>1.4) k.x=-.3; const cx=(k.x-.15)*W, cy=k.y*H, R=H*k.s;
     for(const [farbe,dy,al] of [[koerper,0,deck],[kante,.012,deck*.8]]){
       for(const p of k.teile){ const px=cx+p.dx*R*3, py=cy+(p.dy+dy)*R*3, rx=p.r*R*2.6;
         x.save(); x.translate(px,py); x.scale(1,.32);
         const rg=x.createRadialGradient(0,0,0,0,0,rx); rg.addColorStop(0,rgb(farbe,al)); rg.addColorStop(.6,rgb(farbe,al*.6)); rg.addColorStop(1,rgb(farbe,0));
         x.fillStyle=rg; x.beginPath(); x.arc(0,0,rx,0,7); x.fill(); x.restore(); } } }
+  // Windstriche mit Schleife (ab ca. 15 km/h, mehr bei mehr Wind)
+  for(const w of striche){ if(w.i>=Math.round(WIND*WIND*9)) continue;
+    w.x+=dt*(.05+WIND*.25)*w.v; w.leben+=dt;
+    if(w.x>1.3||w.leben>w.dauer){ w.x=-.3+rnd()*.5; w.y=.08+rnd()*.5; w.leben=0; w.dauer=4+rnd()*5; w.schleife=rnd()<.6; }
+    const L=W*.22*w.v, a=L/(2.6*Math.PI), bb=w.schleife?a*1.9:a*.5, al=.32*Math.sin(Math.PI*w.leben/w.dauer)*e;
+    if(al<=0) continue; x.strokeStyle=rgb([255,255,255],al); x.lineWidth=Math.max(1.5,H*.0025); x.lineCap='round'; x.beginPath();
+    for(let j=0;j<=60;j++){ const p=j/60*2.6*Math.PI, px=w.x*W+a*p-bb*Math.sin(p), py=w.y*H-bb*Math.cos(p)*.8+bb*.8+Math.sin(p*.5+w.leben)*H*.004;
+      j?x.lineTo(px,py):x.moveTo(px,py); } x.stroke(); }
+  // Voegel: kommen, wenn es heller wird, bei Regen und Sturm weniger
+  const vAnzahl=Math.round(cl((t-.35)/.3)*(WETTER==='regen'||WETTER==='schnee'?2:6)*(1-WIND*.5));
+  for(const v of voegel){ if(v.i>=vAnzahl) continue;
+    v.x+=dt*(v.v+WIND*.03); if(v.x>1.15){ v.x=-.15-rnd()*.6; v.y=.12+rnd()*.33; v.v=.025+rnd()*.03; }
+    const vx=v.x*W, vy=(v.y+Math.sin(now/900+v.p)*.006)*H, gr=H*.012*v.g, fl=Math.sin(now/(110+v.g*40)+v.p);
+    x.strokeStyle=rgb(mix([[0,[10,8,14]],[1,[40,40,50]]],e),.85); x.lineWidth=Math.max(1.5,H*.002); x.beginPath();
+    x.moveTo(vx-gr,vy-gr*.6*fl); x.quadraticCurveTo(vx-gr*.4,vy-gr*.3*fl-gr*.1,vx,vy); x.quadraticCurveTo(vx+gr*.4,vy-gr*.3*fl-gr*.1,vx+gr,vy-gr*.6*fl); x.stroke(); }
   // Ferne Berge (blaeulich, etwas Morgenlicht darauf)
   const berg=mix([[0,[4,3,10]],[1,grau([110,105,140],WX.grau)]],e).map((v,i)=>lerp(v,cHor[i],.18*e));
   schicht(bergY,rgb(berg));
   // Huegel mit Wald
   const hc=rgb(mix([[0,[2,2,6]],[1,grau([55,62,70],WX.grau)]],e)); schicht(huegelY,hc); x.fillStyle=hc;
-  for(const b of WALD){ const px=b.u*W, py=huegelY(b.u)*H+2, h=H*.022*b.h; x.beginPath(); x.moveTo(px-h*.3,py); x.lineTo(px+h*WIND*.12*bo*(.6+.4*Math.sin(now/1100+b.u*60)),py-h); x.lineTo(px+h*.3,py); x.fill(); }
+  for(const b of WALD){ const px=b.u*W, py=huegelY(b.u)*H+2, h=H*.022*b.h; x.beginPath(); x.moveTo(px-h*.3,py); x.lineTo(px+h*WIND*WIND*.35*bo*(.6+.4*Math.sin(now/(1400-WIND*900)+b.u*60)),py-h); x.lineTo(px+h*.3,py); x.fill(); }
   // See, spiegelt den Himmel
   const sg=x.createLinearGradient(0,H*SEE,0,H); sg.addColorStop(0,rgb(hell(cHor,.75))); sg.addColorStop(1,rgb(hell(cMid,.45)));
   x.fillStyle=sg; x.fillRect(0,H*SEE,W,H*(1-SEE));
@@ -116,7 +133,7 @@ function frame(now){
   const fc=rgb(schnee? mix([[0,[8,8,14]],[1,[215,220,230]]],e) : mix([[0,[1,1,3]],[1,grau([28,34,30],WX.grau)]],e));
   const tc=rgb(mix([[0,[1,1,3]],[1,grau([22,30,26],WX.grau)]],e));
   schicht(uferY,fc);
-  for(const b of BAEUME){ const h=H*.16*b.h; tanne(b.u*W,uferY(b.u)*H+H*.01,h,tc, h*WIND*(.05*bo + .03*Math.sin(now/(800+b.h*400)+b.u*40))); }
+  for(const b of BAEUME){ const h=H*.16*b.h; tanne(b.u*W,uferY(b.u)*H+H*.01,h,tc, h*(Math.pow(WIND,1.5)*.22*bo + (.006+WIND*.07)*Math.sin(now/((1500-WIND*1000)*(.8+b.h*.4))+b.u*40))); }
   // Regen oder Schnee
   if(tropfen.length){ const a=lerp(.25,.5,e);
     for(const d of tropfen){
@@ -150,11 +167,13 @@ function startTon(){ if(!TON) return;
     const buf=ac.createBuffer(1,ac.sampleRate*4,ac.sampleRate), d=buf.getChannelData(0); for(let i=0;i<d.length;i++) d[i]=Math.random()*2-1;
     if(WETTER==='regen'){ const src=ac.createBufferSource(); src.buffer=buf; src.loop=true; const f=ac.createBiquadFilter(); f.type='lowpass'; f.frequency.value=2200;
       const ng=ac.createGain(); ng.gain.value=.22; src.connect(f); f.connect(ng); ng.connect(master); src.start(); }
-    if(WIND>.05){ const src=ac.createBufferSource(); src.buffer=buf; src.loop=true; windF=ac.createBiquadFilter(); windF.type='bandpass'; windF.frequency.value=300; windF.Q.value=.8;
+    if(WIND>.05){ const N=ac.sampleRate*8, wb=ac.createBuffer(1,N,ac.sampleRate), wd=wb.getChannelData(0); let l=0;
+      for(let i=0;i<N;i++){ l=(l+.02*(Math.random()*2-1))/1.02; wd[i]=l*3.5; } const dr=wd[N-1]-wd[0]; for(let i=0;i<N;i++) wd[i]-=dr*i/N;
+      const src=ac.createBufferSource(); src.buffer=wb; src.loop=true; windF=ac.createBiquadFilter(); windF.type='lowpass'; windF.frequency.value=300; windF.Q.value=.3;
       windG=ac.createGain(); windG.gain.value=0; src.connect(windF); windF.connect(windG); windG.connect(master); src.start(); } }
   else if(ac) ac.resume();
 }
 setInterval(()=>{ const laut = cl((T-.2)/.6); audio.volume = Math.min(1, laut*.9*VOEGEL_LAUT); if(master) master.gain.value = cl(T/.3)*.8;
-  if(windG){ const bo=boe(performance.now()); windG.gain.setTargetAtTime((.04+WIND*.3)*(.25+.75*bo), ac.currentTime, .6); windF.frequency.setTargetAtTime(220+bo*380*(.5+WIND), ac.currentTime, .6); } }, 250);
+  if(windG){ const bo=boe(performance.now()); windG.gain.setTargetAtTime(Math.pow(WIND,2.2)*.12*(.2+.8*bo), ac.currentTime, .8); windF.frequency.setTargetAtTime(180+bo*(150+WIND*350), ac.currentTime, .8); } }, 250);
 addEventListener('click',startTon); addEventListener('keydown',startTon); startTon();
 </script></body></html>
